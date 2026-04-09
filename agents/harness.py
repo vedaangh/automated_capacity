@@ -1,4 +1,4 @@
-"""Agent harness: runs engineer then scientist sequentially on the same EC2 instance."""
+"""Agent harness: runs engineer then scientist in a local directory."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 import os
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -16,7 +15,6 @@ import anthropic
 
 from agents.engineer import build_engineer_prompt, format_engineer_context
 from agents.scientist import build_scientist_prompt, format_scientist_context
-from agents.server_client import ServerClient
 from agents.tools import collect_tool_schemas
 from agents.tools import bash, edit, read, search, web_fetch, timer, create_stream
 from shared.config import ANTHROPIC_MODEL, AWS_REGION
@@ -24,12 +22,11 @@ from shared.protocol import now_iso
 
 
 def _make_client() -> anthropic.AsyncAnthropicBedrock:
-    """Create a Bedrock client. Auth via AWS credentials (env vars or IAM role)."""
     return anthropic.AsyncAnthropicBedrock(aws_region=AWS_REGION)
 
 
 # ---------------------------------------------------------------------------
-# Timer: background thread writes .remaining_seconds every 30s
+# Timer
 # ---------------------------------------------------------------------------
 
 class AgentTimer:
@@ -70,49 +67,14 @@ class AgentTimer:
 
 
 # ---------------------------------------------------------------------------
-# HeartbeatTask: async task POSTs progress every N seconds
-# ---------------------------------------------------------------------------
-
-class HeartbeatTask:
-    def __init__(self, server: ServerClient, agent_id: str, interval: int = 30):
-        self.server = server
-        self.agent_id = agent_id
-        self.interval = interval
-        self._task: asyncio.Task | None = None
-        self.tool_calls = 0
-        self.tokens = 0
-        self.last_activity = ""
-
-    def start(self):
-        self._task = asyncio.create_task(self._loop())
-
-    async def _loop(self):
-        while True:
-            try:
-                await self.server.heartbeat(
-                    self.agent_id, self.tool_calls,
-                    self.tokens, self.last_activity,
-                )
-            except Exception:
-                pass
-            await asyncio.sleep(self.interval)
-
-    def stop(self):
-        if self._task:
-            self._task.cancel()
-
-
-# ---------------------------------------------------------------------------
-# StreamWatcher: daemon thread tails /lab/streams/*.jsonl and POSTs to server
+# Stream watcher — tails JSONL files, broadcasts via ws_manager
 # ---------------------------------------------------------------------------
 
 class StreamWatcher:
-    def __init__(self, streams_dir: str, server: ServerClient,
-                 run_id: str, poll_interval: float = 0.5):
+    def __init__(self, streams_dir: str, run_id: str, ws_manager):
         self.streams_dir = streams_dir
-        self.server = server
         self.run_id = run_id
-        self.poll_interval = poll_interval
+        self.ws = ws_manager
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._offsets: dict[str, int] = {}
@@ -127,14 +89,13 @@ class StreamWatcher:
     def _watch_loop(self):
         while not self._stop.is_set():
             self._scan()
-            self._stop.wait(self.poll_interval)
+            self._stop.wait(0.5)
 
     def _scan(self):
         streams_dir = Path(self.streams_dir)
         if not streams_dir.exists():
             return
 
-        # JSONL files
         for jsonl_file in streams_dir.glob("*.jsonl"):
             stream_id = jsonl_file.stem
             offset = self._offsets.get(str(jsonl_file), 0)
@@ -156,32 +117,34 @@ class StreamWatcher:
                             points.append(json.loads(line))
                         except json.JSONDecodeError:
                             pass
-                if points and self._loop:
+                if points and self._loop and self.ws:
                     asyncio.run_coroutine_threadsafe(
-                        self.server.push_stream_data(self.run_id, stream_id, points),
+                        self.ws.broadcast(self.run_id, {
+                            "type": "stream_data",
+                            "data": {"stream_id": stream_id, "points": points},
+                        }),
                         self._loop,
                     )
 
-        # Video stream directories
         for entry in streams_dir.iterdir():
             if not entry.is_dir():
                 continue
             stream_id = entry.name
             seen = self._seen_frames.setdefault(stream_id, set())
             frames = sorted(entry.glob("frame_*.png"))
-            new_frames = [f for f in frames if f.name not in seen]
-            for frame_path in new_frames:
+            for frame_path in [f for f in frames if f.name not in seen]:
                 seen.add(frame_path.name)
                 try:
                     b64 = base64.b64encode(frame_path.read_bytes()).decode()
                 except Exception:
                     continue
-                if self._loop:
+                if self._loop and self.ws:
                     asyncio.run_coroutine_threadsafe(
-                        self.server.push_stream_data(
-                            self.run_id, stream_id,
-                            [{"frame": b64, "name": frame_path.name}],
-                        ),
+                        self.ws.broadcast(self.run_id, {
+                            "type": "stream_data",
+                            "data": {"stream_id": stream_id,
+                                     "points": [{"frame": b64, "name": frame_path.name}]},
+                        }),
                         self._loop,
                     )
 
@@ -190,11 +153,11 @@ class StreamWatcher:
 
 
 # ---------------------------------------------------------------------------
-# Tool execution dispatcher
+# Tool execution
 # ---------------------------------------------------------------------------
 
 async def execute_tool(name: str, input: dict, work_dir: str,
-                       server: ServerClient, run_id: str) -> str:
+                       run_id: str = "", state=None, ws=None) -> str:
     if name == "bash":
         return await bash.execute(input, work_dir)
     elif name == "edit":
@@ -208,25 +171,23 @@ async def execute_tool(name: str, input: dict, work_dir: str,
     elif name == "check_timer":
         return await timer.execute(input, work_dir)
     elif name == "create_stream":
-        return await create_stream.execute(input, work_dir, server=server, run_id=run_id)
+        return await create_stream.execute(input, work_dir, run_id=run_id,
+                                           state=state, ws=ws)
     else:
         return f"Unknown tool: {name}"
 
 
 # ---------------------------------------------------------------------------
-# Helpers for serializing Claude API content blocks
+# Content helpers
 # ---------------------------------------------------------------------------
 
 def serialize_content(content) -> Any:
-    """Convert Claude API content blocks to JSON-serializable form."""
     if isinstance(content, str):
         return content
     result = []
     for block in content:
         if hasattr(block, "model_dump"):
             result.append(block.model_dump())
-        elif hasattr(block, "to_dict"):
-            result.append(block.to_dict())
         elif isinstance(block, dict):
             result.append(block)
         else:
@@ -235,7 +196,6 @@ def serialize_content(content) -> Any:
 
 
 def extract_text(content) -> str:
-    """Extract text from Claude API response content."""
     if isinstance(content, str):
         return content
     parts = []
@@ -256,10 +216,10 @@ async def run_agent(
     system_prompt: str,
     initial_context: str,
     timeout_seconds: int,
-    server: ServerClient,
-    run_id: str,
     work_dir: str,
-    heartbeat: HeartbeatTask | None = None,
+    run_id: str = "",
+    state=None,
+    ws=None,
 ) -> str:
     """Run one agent phase. Returns the agent's final text output."""
     client = _make_client()
@@ -268,51 +228,80 @@ async def run_agent(
     agent_timer.start()
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": initial_context}]
+    tool_call_count = 0
+    total_tokens = 0
 
     try:
         while not agent_timer.expired:
-            response = await client.messages.create(
-                model=ANTHROPIC_MODEL,
-                max_tokens=8192,
-                system=system_prompt,
-                messages=messages,
-                tools=tools,
-            )
+            try:
+                response = await client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=8192,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                )
+            except Exception as api_err:
+                print(f"[agent {agent_id}] API error: {api_err}")
+                # Retry once after a brief pause
+                import asyncio as _aio
+                await _aio.sleep(2)
+                response = await client.messages.create(
+                    model=ANTHROPIC_MODEL,
+                    max_tokens=8192,
+                    system=system_prompt,
+                    messages=messages,
+                    tools=tools,
+                )
 
-            # Track usage
-            usage_tokens = response.usage.input_tokens + response.usage.output_tokens
-            if heartbeat:
-                heartbeat.tokens += usage_tokens
-
-            # Append assistant response
+            total_tokens += response.usage.input_tokens + response.usage.output_tokens
             messages.append({"role": "assistant", "content": response.content})
 
-            # Stream transcript
-            await server.append_transcript(agent_id, [
-                {"role": "assistant", "content": serialize_content(response.content),
-                 "ts": now_iso()},
-            ])
+            # Update agent state
+            if state and agent_id:
+                await state.update_agent(agent_id,
+                    tool_calls=tool_call_count,
+                    tokens_used=total_tokens,
+                    last_heartbeat=now_iso())
 
-            # Check stop reason
+            # Transcript
+            if state and agent_id:
+                from shared.protocol import TranscriptMessage
+                await state.append_transcript(agent_id, [
+                    TranscriptMessage(role="assistant",
+                                     content=serialize_content(response.content)),
+                ])
+                if ws:
+                    await ws.broadcast(run_id, {
+                        "type": "transcript",
+                        "data": {"agent_id": agent_id, "messages": [
+                            {"role": "assistant",
+                             "content": str(serialize_content(response.content))[:2000]}
+                        ]},
+                    })
+
             if response.stop_reason != "tool_use":
                 return extract_text(response.content)
 
-            # Execute tool calls
+            # Execute tools
             tool_results = []
             for block in response.content:
                 if block.type != "tool_use":
                     continue
+                tool_call_count += 1
 
-                if heartbeat:
-                    heartbeat.tool_calls += 1
-                    heartbeat.last_activity = f"{block.name}: {str(block.input)[:50]}"
-
-                # signal_done: exit immediately
                 if block.name == "signal_done":
                     return block.input.get("result", "")
 
+                # Update activity
+                if state and agent_id:
+                    await state.update_agent(agent_id,
+                        last_activity=f"{block.name}: {str(block.input)[:50]}",
+                        tool_calls=tool_call_count)
+
                 result_str = await execute_tool(
-                    block.name, block.input, work_dir, server, run_id,
+                    block.name, block.input, work_dir,
+                    run_id=run_id, state=state, ws=ws,
                 )
                 tool_results.append({
                     "type": "tool_result",
@@ -322,115 +311,78 @@ async def run_agent(
 
             messages.append({"role": "user", "content": tool_results})
 
-            # Stream transcript (tool results, truncated)
-            await server.append_transcript(agent_id, [
-                {"role": "tool_result", "tool_use_id": tr["tool_use_id"],
-                 "content": tr["content"][:2000], "ts": now_iso()}
-                for tr in tool_results
-            ])
-
-        # Timeout
-        return "TIMEOUT: Ran out of time. Returning current state of work."
+        return "TIMEOUT: Ran out of time."
 
     finally:
         agent_timer.stop()
 
 
 # ---------------------------------------------------------------------------
-# Main: runs engineer then scientist
+# Run both phases: engineer → scientist
 # ---------------------------------------------------------------------------
 
-async def main(payload_path: str):
-    payload = json.loads(Path(payload_path).read_text())
+async def run_both_phases(
+    run_id: str,
+    sim_spec: dict,
+    research_traces: list,
+    engineer_timeout: int,
+    scientist_timeout: int,
+    state,
+    ws,
+) -> None:
+    """Run engineer then scientist in /lab/{run_id}/. Called as asyncio task."""
+    work_dir = os.path.join("lab", run_id)
+    streams_dir = os.path.join(work_dir, "streams")
+    os.makedirs(streams_dir, exist_ok=True)
 
-    server = ServerClient(payload["server_url"])
-    run_id = payload["run_id"]
-    work_dir = "/lab"
-    os.makedirs(work_dir, exist_ok=True)
-    os.makedirs(f"{work_dir}/streams", exist_ok=True)
+    eng_id = f"{run_id}-eng"
+    sci_id = f"{run_id}-sci"
 
     # Start stream watcher
-    watcher = StreamWatcher(f"{work_dir}/streams", server, run_id)
+    watcher = StreamWatcher(streams_dir, run_id, ws)
     watcher.start()
 
     try:
-        # ENGINEER PHASE
-        eng_id = payload["engineer_agent_id"]
-        eng_hb = HeartbeatTask(server, eng_id)
-        eng_hb.start()
+        # --- ENGINEER ---
+        await state.update_agent(eng_id, status="running", started_at=now_iso())
+        await ws.broadcast(run_id, {"type": "phase_change", "data": {"status": "engineering"}})
 
         engineer_result = await run_agent(
             agent_id=eng_id,
-            system_prompt=build_engineer_prompt(payload["sim_spec"]),
-            initial_context=format_engineer_context(
-                payload["sim_spec"], payload["research_traces"],
-            ),
-            timeout_seconds=payload["engineer_timeout"],
-            server=server, run_id=run_id, work_dir=work_dir,
-            heartbeat=eng_hb,
+            system_prompt=build_engineer_prompt(sim_spec),
+            initial_context=format_engineer_context(sim_spec, research_traces),
+            timeout_seconds=engineer_timeout,
+            work_dir=work_dir,
+            run_id=run_id, state=state, ws=ws,
         )
 
-        eng_hb.stop()
-        await server.signal_done(eng_id, result=engineer_result, status="done")
-        Path(f"{work_dir}/handoff.md").write_text(engineer_result)
+        await state.update_agent(eng_id, status="done", result=engineer_result)
+        Path(os.path.join(work_dir, "handoff.md")).write_text(engineer_result)
 
-        # SCIENTIST PHASE
-        sci_id = payload["scientist_agent_id"]
-        sci_hb = HeartbeatTask(server, sci_id)
-        sci_hb.start()
+        # --- SCIENTIST ---
+        await state.update_agent(sci_id, status="running", started_at=now_iso())
+        await state.update_run(run_id, status="science")
+        await ws.broadcast(run_id, {"type": "phase_change", "data": {"status": "science"}})
 
         scientist_result = await run_agent(
             agent_id=sci_id,
-            system_prompt=build_scientist_prompt(payload["sim_spec"]),
-            initial_context=format_scientist_context(
-                payload["sim_spec"], payload["research_traces"], engineer_result,
-            ),
-            timeout_seconds=payload["scientist_timeout"],
-            server=server, run_id=run_id, work_dir=work_dir,
-            heartbeat=sci_hb,
+            system_prompt=build_scientist_prompt(sim_spec),
+            initial_context=format_scientist_context(sim_spec, research_traces, engineer_result),
+            timeout_seconds=scientist_timeout,
+            work_dir=work_dir,
+            run_id=run_id, state=state, ws=ws,
         )
 
-        sci_hb.stop()
-        await server.signal_done(sci_id, result=scientist_result, status="done")
+        await state.update_agent(sci_id, status="done", result=scientist_result)
+        await state.update_run(run_id, status="complete", findings=scientist_result)
+        await ws.broadcast(run_id, {"type": "complete", "data": {"findings": scientist_result}})
 
     except Exception as e:
-        # Try to report failure
-        try:
-            await server.signal_done(
-                payload.get("engineer_agent_id", "unknown"),
-                result=f"Harness crashed: {e}",
-                status="failed",
-            )
-        except Exception:
-            pass
-        raise
+        import traceback
+        err = f"{type(e).__name__}: {e}"
+        print(f"[harness] Run {run_id} failed: {err}")
+        traceback.print_exc()
+        await state.update_run(run_id, status="failed", error=err)
+        await ws.broadcast(run_id, {"type": "error", "data": {"error": err}})
     finally:
         watcher.stop()
-        await server.close()
-
-
-def self_terminate():
-    """Terminate this EC2 instance."""
-    try:
-        result = subprocess.run(
-            ["curl", "-s", "http://169.254.169.254/latest/meta-data/instance-id"],
-            capture_output=True, text=True, timeout=5,
-        )
-        instance_id = result.stdout.strip()
-        if instance_id.startswith("i-"):
-            subprocess.run(
-                ["aws", "ec2", "terminate-instances", "--instance-ids", instance_id],
-                timeout=10,
-            )
-    except Exception:
-        pass
-
-
-# Entry point for running on EC2
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--payload", required=True)
-    args = parser.parse_args()
-    asyncio.run(main(args.payload))
-    self_terminate()

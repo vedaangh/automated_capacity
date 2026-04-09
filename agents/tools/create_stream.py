@@ -5,18 +5,13 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from agents.server_client import ServerClient
 
 SCHEMA = {
     "name": "create_stream",
     "description": (
         "Create a live UI component in the browser (chart, video, table, etc). "
         "Returns a file path. Write JSONL data to that file and it streams to the UI "
-        "automatically via the background watcher. The browser renders the component "
-        "immediately (empty) and updates as data arrives."
+        "automatically via the background watcher."
     ),
     "input_schema": {
         "type": "object",
@@ -36,8 +31,7 @@ SCHEMA = {
                     '  line_chart: {"x": "step", "y": ["loss", "val_loss"]}\n'
                     '  video_stream: {"width": 640, "height": 480, "fps": 10}\n'
                     '  table: {"columns": ["experiment", "p", "d", "result"]}\n'
-                    '  metric_card: {"name": "Best Loss", "format": ".4f"}\n'
-                    '  text_log: {"max_lines": 100}'
+                    '  metric_card: {"name": "Best Loss", "format": ".4f"}'
                 ),
             },
         },
@@ -47,20 +41,29 @@ SCHEMA = {
 
 
 async def execute(input: dict, work_dir: str, *,
-                  server: "ServerClient | None" = None, run_id: str = "") -> str:
+                  run_id: str = "", state=None, ws=None) -> str:
     streams_dir = os.path.join(work_dir, "streams")
     os.makedirs(streams_dir, exist_ok=True)
 
-    # Register with server if available
-    stream_id = ""
-    if server and run_id:
-        stream_id = await server.create_stream(
-            run_id, input["component_type"], input["title"], input["config"]
-        )
+    # Register with state manager if available
+    if state and run_id:
+        stream_id = await state.create_stream(
+            run_id, input["component_type"], input["title"], input["config"])
     else:
-        # Local fallback (for testing without server)
         import hashlib
         stream_id = "local-" + hashlib.md5(input["title"].encode()).hexdigest()[:6]
+
+    # Broadcast to browser
+    if ws and run_id:
+        await ws.broadcast(run_id, {
+            "type": "stream_created",
+            "data": {
+                "stream_id": stream_id,
+                "component_type": input["component_type"],
+                "title": input["title"],
+                "config": input["config"],
+            },
+        })
 
     if input["component_type"] == "video_stream":
         stream_path = os.path.join(streams_dir, stream_id)
@@ -69,8 +72,7 @@ async def execute(input: dict, work_dir: str, *,
             f"Stream '{stream_id}' created. Write PNG frames to:\n"
             f"  {stream_path}/frame_0001.png\n"
             f"  {stream_path}/frame_0002.png\n"
-            f"  etc.\n"
-            f"Frames are automatically streamed to the browser."
+            f"Frames stream to the browser automatically."
         )
     else:
         stream_path = os.path.join(streams_dir, f"{stream_id}.jsonl")
@@ -83,5 +85,5 @@ async def execute(input: dict, work_dir: str, *,
             f"  {stream_path}\n"
             f"Each line should be a JSON object, e.g.:\n"
             f"  {example}\n"
-            f"Data is automatically streamed to the browser."
+            f"Data streams to the browser automatically."
         )

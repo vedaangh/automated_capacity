@@ -42,7 +42,7 @@ class Finding(BaseModel):
 class AgentState(BaseModel):
     id: str
     run_id: str
-    role: Literal["engineer", "scientist"]
+    role: Literal["orchestrator", "engineer", "scientist"]
     status: Literal["pending", "running", "done", "failed", "timeout"] = "pending"
     ec2_instance_id: str | None = None
     timeout_seconds: int = 1200
@@ -84,6 +84,8 @@ class Run(BaseModel):
     research_findings: list[dict[str, Any]] | None = None
     findings: str | None = None         # final scientist output
     error: str | None = None
+    engineer_timeout: int = 1200        # seconds
+    scientist_timeout: int = 1200       # seconds
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -94,6 +96,8 @@ class Run(BaseModel):
 
 class CreateRunRequest(BaseModel):
     question: str
+    engineer_timeout: int | None = None   # seconds, default from config
+    scientist_timeout: int | None = None  # seconds, default from config
 
 
 class RunResponse(BaseModel):

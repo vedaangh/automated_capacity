@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS runs (
     research_findings TEXT,
     findings TEXT,
     error TEXT,
+    engineer_timeout INTEGER NOT NULL DEFAULT 1200,
+    scientist_timeout INTEGER NOT NULL DEFAULT 1200,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -94,14 +96,19 @@ class StateManager:
     # Runs
     # -----------------------------------------------------------------------
 
-    async def create_run(self, question: str) -> Run:
+    async def create_run(self, question: str,
+                         engineer_timeout: int = 1200,
+                         scientist_timeout: int = 1200) -> Run:
         run_id = uuid.uuid4().hex[:12]
         ts = now_iso()
         await self._execute(
-            "INSERT INTO runs (id, status, question, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (run_id, "research", question, ts, ts),
+            "INSERT INTO runs (id, status, question, engineer_timeout, scientist_timeout, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (run_id, "research", question, engineer_timeout, scientist_timeout, ts, ts),
         )
-        return Run(id=run_id, status="research", question=question, created_at=ts, updated_at=ts)
+        return Run(id=run_id, status="research", question=question,
+                   engineer_timeout=engineer_timeout, scientist_timeout=scientist_timeout,
+                   created_at=ts, updated_at=ts)
 
     async def get_run(self, run_id: str) -> Run | None:
         row = await self._fetchone("SELECT * FROM runs WHERE id = ?", (run_id,))
@@ -139,6 +146,8 @@ class StateManager:
             id=row["id"], status=row["status"], question=row["question"],
             sim_spec=sim_spec, research_findings=findings_data,
             findings=row.get("findings"), error=row.get("error"),
+            engineer_timeout=row.get("engineer_timeout", 1200),
+            scientist_timeout=row.get("scientist_timeout", 1200),
             created_at=row["created_at"], updated_at=row["updated_at"],
         )
 
@@ -147,7 +156,8 @@ class StateManager:
     # -----------------------------------------------------------------------
 
     async def create_agent(self, run_id: str, role: str, timeout: int) -> AgentState:
-        agent_id = f"{run_id}-{'eng' if role == 'engineer' else 'sci'}"
+        role_suffix = {"engineer": "eng", "scientist": "sci", "orchestrator": "orch"}
+        agent_id = f"{run_id}-{role_suffix.get(role, role[:4])}"
         ts = now_iso()
         await self._execute(
             "INSERT INTO agents (id, run_id, role, status, timeout_seconds, created_at, updated_at) "

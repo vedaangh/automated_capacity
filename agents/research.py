@@ -43,7 +43,7 @@ async def _fetch_url(url: str) -> str:
         return f"Error fetching {url}: {e}"
 
 
-async def research_single_query(query: str, max_turns: int = 5) -> list[dict[str, Any]]:
+async def research_single_query(query: str) -> list[dict[str, Any]]:
     """Run one research agent on Bedrock. Returns findings."""
     client = anthropic.AsyncAnthropicBedrock(aws_region=AWS_REGION)
 
@@ -61,7 +61,7 @@ async def research_single_query(query: str, max_turns: int = 5) -> list[dict[str
 
     findings: list[dict[str, Any]] = []
 
-    for _ in range(max_turns):
+    while True:
         response = await client.messages.create(
             model=RESEARCH_MODEL,
             max_tokens=2048,

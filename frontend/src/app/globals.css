@@ -57,6 +57,9 @@ body {
 
 .bg-mesh {
   background-color: var(--bg-primary);
+  background-image:
+    radial-gradient(circle, var(--border-dotted) 0.8px, transparent 0.8px);
+  background-size: 20px 20px;
 }
 
 .border-rule {

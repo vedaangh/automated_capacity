@@ -2,17 +2,22 @@
 
 import { useRef, useEffect } from "react";
 import type { Session, Card, SimulationCard as SimCardType } from "@/lib/types";
+import type { LiveStream } from "@/lib/store";
 import ChatInput from "./ChatInput";
 import UserCardView from "./cards/UserCard";
 import ResearchCardView from "./cards/ResearchCard";
 import EngineeringCardView from "./cards/EngineeringCard";
 import SimulationCardView from "./cards/SimulationCard";
 import ExperimentCardView from "./cards/ExperimentCard";
+import StreamRenderer from "./cards/StreamRenderer";
 import type {
   UserCard,
   ResearchCard,
   EngineeringCard,
   ExperimentCard,
+  StatusCard,
+  FindingsCard,
+  ErrorCard,
 } from "@/lib/types";
 
 const typeLabel: Record<string, string> = {
@@ -20,7 +25,38 @@ const typeLabel: Record<string, string> = {
   research: "Research",
   engineering: "Engineering",
   experiment: "Experiments",
+  status: "Status",
+  findings: "Findings",
+  error: "Error",
+  simulation: "",
 };
+
+function StatusCardView({ content }: { content: StatusCard }) {
+  return (
+    <div className="animate-fade-in">
+      <div className="flex items-center gap-2">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent-blue animate-pulse" />
+        <span className="text-[13px] text-text-secondary">{content.message}</span>
+      </div>
+    </div>
+  );
+}
+
+function FindingsCardView({ content }: { content: FindingsCard }) {
+  return (
+    <div className="animate-fade-in">
+      <p className="text-[13.5px] text-text-primary leading-relaxed whitespace-pre-wrap">{content.text}</p>
+    </div>
+  );
+}
+
+function ErrorCardView({ content }: { content: ErrorCard }) {
+  return (
+    <div className="animate-fade-in">
+      <p className="text-[13px] text-accent-red">{content.message}</p>
+    </div>
+  );
+}
 
 function CardContent({
   card,
@@ -40,6 +76,12 @@ function CardContent({
       return null;
     case "experiment":
       return <ExperimentCardView content={card.content as ExperimentCard} />;
+    case "status":
+      return <StatusCardView content={card.content as StatusCard} />;
+    case "findings":
+      return <FindingsCardView content={card.content as FindingsCard} />;
+    case "error":
+      return <ErrorCardView content={card.content as ErrorCard} />;
     default:
       return null;
   }
@@ -64,14 +106,16 @@ function TimelinePanel({
       <div className="space-y-6">
         {panelCards.map((card, i) => (
           <div key={card.id} className="animate-fade-in">
-            <div className="flex items-baseline gap-3 mb-1.5">
-              <span className="text-[10px] font-mono text-text-muted tabular-nums">{card.timestamp}</span>
-              {typeLabel[card.type] && (
-                <span className="text-[10px] text-text-muted uppercase tracking-[0.1em]">
-                  {typeLabel[card.type]}
-                </span>
-              )}
-            </div>
+            {card.timestamp && (
+              <div className="flex items-baseline gap-3 mb-1.5">
+                <span className="text-[10px] font-mono text-text-muted tabular-nums">{card.timestamp}</span>
+                {typeLabel[card.type] && (
+                  <span className="text-[10px] text-text-muted uppercase tracking-[0.1em]">
+                    {typeLabel[card.type]}
+                  </span>
+                )}
+              </div>
+            )}
             <CardContent card={card} onAddWindow={onAddWindow} />
             {i < panelCards.length - 1 && (
               <div className="mt-6 border-b border-border" />
@@ -87,15 +131,17 @@ export default function ChatView({
   session,
   hasSim,
   onAddWindow,
+  onSend,
+  liveStreams,
 }: {
   session: Session;
   hasSim: boolean;
   onAddWindow: () => void;
+  onSend: (question: string) => void;
+  liveStreams?: Map<string, LiveStream>;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputDisabled = session.cards.some(
-    (c) => c.type === "engineering" || c.type === "experiment"
-  );
+  const inputDisabled = session.cards.length > 0 && session.status !== "idle";
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -107,6 +153,11 @@ export default function ChatView({
   const simContent = simCard?.content as SimCardType | undefined;
 
   if (hasSim && simContent) {
+    // Gather streams for the sim windows
+    const streamEntries = liveStreams
+      ? Array.from(liveStreams.values()).slice(0, simContent.windowCount)
+      : [];
+
     return (
       <div className="flex-1 flex min-w-0">
         <div className="flex-1 flex flex-col p-5 min-w-0 animate-fade-in">
@@ -116,7 +167,11 @@ export default function ChatView({
               {simContent.windowCount} view{simContent.windowCount !== 1 ? "s" : ""}
             </span>
           </div>
-          <SimulationCardView content={simContent} onAddWindow={onAddWindow} expanded />
+          {streamEntries.length > 0 ? (
+            <StreamRenderer streams={streamEntries} onAddWindow={onAddWindow} maxWindows={simContent.maxWindows} />
+          ) : (
+            <SimulationCardView content={simContent} onAddWindow={onAddWindow} expanded />
+          )}
         </div>
 
         <div className="w-[360px] shrink-0 bg-bg-secondary flex flex-col animate-slide-in-right">
@@ -152,7 +207,7 @@ export default function ChatView({
           ))}
         </div>
       </div>
-      <ChatInput onSend={() => {}} disabled={inputDisabled} />
+      <ChatInput onSend={onSend} disabled={inputDisabled} />
     </div>
   );
 }

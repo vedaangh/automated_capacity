@@ -2,18 +2,38 @@
 
 import { useState } from "react";
 
+export interface RunConfig {
+  question: string;
+  engineer_timeout: number;
+  scientist_timeout: number;
+}
+
+const TIMEOUT_PRESETS = [
+  { label: "Low", minutes: 1 },
+  { label: "Medium", minutes: 2 },
+  { label: "High", minutes: 5 },
+  { label: "Max", minutes: 10 },
+  { label: "Ultra-Max", minutes: 20 },
+] as const;
+
 export default function ChatInput({
   onSend,
   disabled,
 }: {
-  onSend: (message: string) => void;
+  onSend: (config: RunConfig) => void;
   disabled: boolean;
 }) {
   const [value, setValue] = useState("");
+  const [selectedPreset, setSelectedPreset] = useState(2); // default: High (5 min)
 
   const handleSubmit = () => {
     if (!value.trim() || disabled) return;
-    onSend(value.trim());
+    const minutes = TIMEOUT_PRESETS[selectedPreset].minutes;
+    onSend({
+      question: value.trim(),
+      engineer_timeout: minutes * 60,
+      scientist_timeout: minutes * 60,
+    });
     setValue("");
   };
 
@@ -29,6 +49,27 @@ export default function ChatInput({
             Agent running autonomously
           </p>
         )}
+
+        <div className="flex items-center gap-1 mb-2 px-1">
+          <span className="text-[10px] text-text-muted uppercase tracking-wider mr-1">Budget</span>
+          {TIMEOUT_PRESETS.map((preset, i) => (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => setSelectedPreset(i)}
+              disabled={disabled}
+              className={`px-2 py-0.5 text-[10px] rounded transition-all cursor-pointer ${
+                i === selectedPreset
+                  ? "bg-text-primary/10 text-text-primary"
+                  : "text-text-muted hover:text-text-primary hover:bg-text-primary/5"
+              }`}
+            >
+              {preset.label}
+              <span className="ml-0.5 opacity-50">{preset.minutes}m</span>
+            </button>
+          ))}
+        </div>
+
         <div className="bg-bg-tertiary px-4 border-b border-text-primary/20 focus-within:border-text-primary transition-colors duration-200">
           <div className="flex items-end">
             <textarea

@@ -27,7 +27,10 @@ def init(state_manager: StateManager, ws_manager: WSManager,
 
 @router.post("/runs", response_model=RunResponse)
 async def create_run(body: CreateRunRequest):
-    run = await state.create_run(body.question)
+    from shared.config import ENGINEER_TIMEOUT, SCIENTIST_TIMEOUT
+    eng_t = body.engineer_timeout or ENGINEER_TIMEOUT
+    sci_t = body.scientist_timeout or SCIENTIST_TIMEOUT
+    run = await state.create_run(body.question, eng_t, sci_t)
 
     # Fire the orchestrator as a background task (if configured)
     if _on_run_created:
@@ -44,6 +47,17 @@ async def get_run(run_id: str):
     agents = await state.get_agents_for_run(run_id)
     streams = await state.get_streams_for_run(run_id)
     return RunResponse(run=run, agents=agents, streams=streams)
+
+
+@router.get("/runs/{run_id}/transcript")
+async def get_transcript(run_id: str):
+    """Get all transcripts for a run (orchestrator + engineer + scientist)."""
+    agents = await state.get_agents_for_run(run_id)
+    result = {}
+    for agent in agents:
+        messages = await state.read_transcript(agent.id)
+        result[agent.id] = {"role": agent.role, "messages": messages}
+    return result
 
 
 @router.get("/runs", response_model=list[Run])

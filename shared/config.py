@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Bedrock model IDs (cross-region inference profiles)
-ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "us.anthropic.claude-opus-4-6-v1")
+ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 ORCHESTRATOR_MODEL = os.environ.get("ORCHESTRATOR_MODEL", ANTHROPIC_MODEL)
 RESEARCH_MODEL = os.environ.get("RESEARCH_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 

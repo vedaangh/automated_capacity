@@ -16,9 +16,13 @@ export default function Sidebar({
   return (
     <aside className="w-[260px] shrink-0 h-full bg-bg-secondary flex flex-col">
       <div className="px-5 pt-6 pb-5">
-        <span className="text-[11px] font-semibold text-text-muted tracking-[0.12em] uppercase">
+        <button
+          type="button"
+          onClick={onNew}
+          className="text-[11px] font-semibold text-text-muted tracking-[0.12em] uppercase hover:text-text-primary transition-colors cursor-pointer"
+        >
           Automated Capacity
-        </span>
+        </button>
       </div>
 
       <div className="px-4 pb-4">

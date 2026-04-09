@@ -5,8 +5,8 @@ export const mockSessions: Session[] = [
     id: "s1",
     name: "Quadcopter PID Tuning",
     date: "Apr 9",
-    status: "running",
-    domain: "Control",
+    status: "science",
+
     cards: [
       {
         id: "c1",
@@ -93,6 +93,7 @@ export const mockSessions: Session[] = [
           windowCount: 1,
           maxWindows: 4,
           connected: true,
+          streamIds: [],
         },
       },
       {
@@ -171,16 +172,16 @@ export const mockSessions: Session[] = [
     id: "s2",
     name: "LLM Pretraining",
     date: "Apr 8",
-    status: "completed",
-    domain: "ML",
+    status: "complete",
+
     cards: [],
   },
   {
     id: "s3",
     name: "Portfolio Optimization",
     date: "Apr 7",
-    status: "completed",
-    domain: "Economics",
+    status: "complete",
+
     cards: [],
   },
   {
@@ -188,7 +189,7 @@ export const mockSessions: Session[] = [
     name: "Bridge Topology",
     date: "Apr 5",
     status: "failed",
-    domain: "Physics",
+
     cards: [],
   },
 ];
