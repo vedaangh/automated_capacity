@@ -3,8 +3,9 @@
 import { useRef, useEffect } from "react";
 import type { Session, Card, SimulationCard as SimCardType } from "@/lib/types";
 import type { LiveStream } from "@/lib/store";
-import ChatInput from "./ChatInput";
+import ChatInput, { type RunConfig } from "./ChatInput";
 import UserCardView from "./cards/UserCard";
+import OrchestratorCardView from "./cards/OrchestratorCard";
 import ResearchCardView from "./cards/ResearchCard";
 import EngineeringCardView from "./cards/EngineeringCard";
 import SimulationCardView from "./cards/SimulationCard";
@@ -12,6 +13,7 @@ import ExperimentCardView from "./cards/ExperimentCard";
 import StreamRenderer from "./cards/StreamRenderer";
 import type {
   UserCard,
+  OrchestratorCard,
   ResearchCard,
   EngineeringCard,
   ExperimentCard,
@@ -22,9 +24,10 @@ import type {
 
 const typeLabel: Record<string, string> = {
   user: "Prompt",
+  orchestrator: "",
   research: "Research",
   engineering: "Engineering",
-  experiment: "Experiments",
+  experiment: "Scientist",
   status: "Status",
   findings: "Findings",
   error: "Error",
@@ -68,6 +71,8 @@ function CardContent({
   switch (card.type) {
     case "user":
       return <UserCardView content={card.content as UserCard} />;
+    case "orchestrator":
+      return <OrchestratorCardView content={card.content as OrchestratorCard} />;
     case "research":
       return <ResearchCardView content={card.content as ResearchCard} />;
     case "engineering":
@@ -90,16 +95,18 @@ function CardContent({
 function TimelinePanel({
   cards,
   onAddWindow,
+  liveRevision,
 }: {
   cards: Card[];
   onAddWindow: () => void;
+  liveRevision?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelCards = cards.filter((c) => c.type !== "simulation");
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [cards.length]);
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [cards.length, liveRevision]);
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-5">
@@ -133,12 +140,15 @@ export default function ChatView({
   onAddWindow,
   onSend,
   liveStreams,
+  liveRevision,
 }: {
   session: Session;
   hasSim: boolean;
   onAddWindow: () => void;
-  onSend: (question: string) => void;
+  onSend: (config: RunConfig) => void;
   liveStreams?: Map<string, LiveStream>;
+  /** Bumps when live store transcript/phase updates so the feed scrolls without a full refresh */
+  liveRevision?: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputDisabled = session.cards.length > 0 && session.status !== "idle";
@@ -147,7 +157,7 @@ export default function ChatView({
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [session.cards.length]);
+  }, [session.cards.length, liveRevision]);
 
   const simCard = session.cards.find((c) => c.type === "simulation");
   const simContent = simCard?.content as SimCardType | undefined;
@@ -178,7 +188,7 @@ export default function ChatView({
           <div className="px-5 pt-5 pb-4">
             <span className="text-[13px] text-text-primary">{session.name}</span>
           </div>
-          <TimelinePanel cards={session.cards} onAddWindow={onAddWindow} />
+          <TimelinePanel cards={session.cards} onAddWindow={onAddWindow} liveRevision={liveRevision} />
         </div>
       </div>
     );

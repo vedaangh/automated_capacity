@@ -36,6 +36,7 @@ async def run_orchestrator(run_id: str, state: StateManager, ws: WSManager) -> N
     await state.create_agent(run_id, "orchestrator", timeout=0)
     await state.update_agent(orch_id, status="running", started_at=now_iso())
 
+    model = run.model or ORCHESTRATOR_MODEL
     client = anthropic.AsyncAnthropicBedrock(aws_region=AWS_REGION)
     messages = [{"role": "user", "content": f"Research question: {run.question}"}]
 
@@ -45,7 +46,7 @@ async def run_orchestrator(run_id: str, state: StateManager, ws: WSManager) -> N
         while True:
             turn += 1
             response = await client.messages.create(
-                model=ORCHESTRATOR_MODEL,
+                model=model,
                 max_tokens=4096,
                 system=ORCHESTRATOR_SYSTEM_PROMPT,
                 messages=messages,

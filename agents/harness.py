@@ -218,6 +218,7 @@ async def run_agent(
     timeout_seconds: int,
     work_dir: str,
     run_id: str = "",
+    model: str = "",
     state=None,
     ws=None,
 ) -> str:
@@ -225,6 +226,7 @@ async def run_agent(
     client = _make_client()
     tools = collect_tool_schemas()
     agent_timer = AgentTimer(timeout_seconds, work_dir)
+    run_model = model or ANTHROPIC_MODEL
     agent_timer.start()
 
     messages: list[dict[str, Any]] = [{"role": "user", "content": initial_context}]
@@ -235,7 +237,7 @@ async def run_agent(
         while not agent_timer.expired:
             try:
                 response = await client.messages.create(
-                    model=ANTHROPIC_MODEL,
+                    model=run_model,
                     max_tokens=8192,
                     system=system_prompt,
                     messages=messages,
@@ -247,7 +249,7 @@ async def run_agent(
                 import asyncio as _aio
                 await _aio.sleep(2)
                 response = await client.messages.create(
-                    model=ANTHROPIC_MODEL,
+                    model=run_model,
                     max_tokens=8192,
                     system=system_prompt,
                     messages=messages,
@@ -329,6 +331,7 @@ async def run_both_phases(
     scientist_timeout: int,
     state,
     ws,
+    model: str = "",
 ) -> None:
     """Run engineer then scientist in /lab/{run_id}/. Called as asyncio task."""
     work_dir = os.path.join("lab", run_id)
@@ -349,11 +352,11 @@ async def run_both_phases(
 
         engineer_result = await run_agent(
             agent_id=eng_id,
-            system_prompt=build_engineer_prompt(sim_spec),
-            initial_context=format_engineer_context(sim_spec, research_traces),
+            system_prompt=build_engineer_prompt(engineer_timeout),
+            initial_context=format_engineer_context(sim_spec, research_traces, engineer_timeout),
             timeout_seconds=engineer_timeout,
             work_dir=work_dir,
-            run_id=run_id, state=state, ws=ws,
+            run_id=run_id, model=model, state=state, ws=ws,
         )
 
         await state.update_agent(eng_id, status="done", result=engineer_result)
@@ -370,7 +373,7 @@ async def run_both_phases(
             initial_context=format_scientist_context(sim_spec, research_traces, engineer_result),
             timeout_seconds=scientist_timeout,
             work_dir=work_dir,
-            run_id=run_id, state=state, ws=ws,
+            run_id=run_id, model=model, state=state, ws=ws,
         )
 
         await state.update_agent(sci_id, status="done", result=scientist_result)

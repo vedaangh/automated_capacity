@@ -15,12 +15,13 @@ export interface UseRunSocketReturn {
 
 /**
  * Opens a WebSocket to /runs/{runId}/stream.
- * Calls `onEvent` for every parsed WSEvent.
+ * Calls `onEvent` for every parsed WSEvent. The `runId` argument is always the
+ * socket's run (avoids stale React state when dispatching into the store).
  * Automatically reconnects on disconnect (up to 5 retries).
  */
 export function useRunSocket(
   runId: string | null,
-  onEvent: (event: WSEvent) => void,
+  onEvent: (event: WSEvent, runId: string) => void,
 ): UseRunSocketReturn {
   const wsRef = useRef<WebSocket | null>(null);
   const onEventRef = useRef(onEvent);
@@ -50,7 +51,7 @@ export function useRunSocket(
       try {
         const event = JSON.parse(e.data) as WSEvent;
         setLastEvent(event);
-        onEventRef.current(event);
+        onEventRef.current(event, runId);
       } catch {
         // ignore malformed messages
       }

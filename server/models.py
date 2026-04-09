@@ -86,6 +86,7 @@ class Run(BaseModel):
     error: str | None = None
     engineer_timeout: int = 1200        # seconds
     scientist_timeout: int = 1200       # seconds
+    model: str = ""                     # Bedrock model ID
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -98,6 +99,7 @@ class CreateRunRequest(BaseModel):
     question: str
     engineer_timeout: int | None = None   # seconds, default from config
     scientist_timeout: int | None = None  # seconds, default from config
+    model: str | None = None              # Bedrock model ID, default from config
 
 
 class RunResponse(BaseModel):

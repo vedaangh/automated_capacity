@@ -72,6 +72,8 @@ export interface Run {
   research_findings: Record<string, unknown>[] | null;
   findings: string | null;
   error: string | null;
+  engineer_timeout: number;
+  scientist_timeout: number;
   created_at: string;
   updated_at: string;
 }
@@ -131,10 +133,12 @@ export function createRun(
   question: string,
   engineer_timeout?: number,
   scientist_timeout?: number,
+  model?: string,
 ): Promise<RunResponse> {
   const body: Record<string, unknown> = { question };
   if (engineer_timeout) body.engineer_timeout = engineer_timeout;
   if (scientist_timeout) body.scientist_timeout = scientist_timeout;
+  if (model) body.model = model;
   return json("/runs", {
     method: "POST",
     body: JSON.stringify(body),

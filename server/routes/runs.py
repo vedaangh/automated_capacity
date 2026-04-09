@@ -27,10 +27,11 @@ def init(state_manager: StateManager, ws_manager: WSManager,
 
 @router.post("/runs", response_model=RunResponse)
 async def create_run(body: CreateRunRequest):
-    from shared.config import ENGINEER_TIMEOUT, SCIENTIST_TIMEOUT
+    from shared.config import ENGINEER_TIMEOUT, SCIENTIST_TIMEOUT, ANTHROPIC_MODEL
     eng_t = body.engineer_timeout or ENGINEER_TIMEOUT
     sci_t = body.scientist_timeout or SCIENTIST_TIMEOUT
-    run = await state.create_run(body.question, eng_t, sci_t)
+    model = body.model or ANTHROPIC_MODEL
+    run = await state.create_run(body.question, eng_t, sci_t, model)
 
     # Fire the orchestrator as a background task (if configured)
     if _on_run_created:

@@ -180,6 +180,7 @@ async def _execute_submit_sim_spec(
         research_traces=research_traces,
         engineer_timeout=eng_timeout,
         scientist_timeout=sci_timeout,
+        model=run.model or "",
         state=state,
         ws=ws,
     ))

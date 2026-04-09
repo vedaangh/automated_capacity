@@ -1,6 +1,15 @@
 export type SessionStatus = "research" | "deciding" | "engineering" | "science" | "complete" | "failed" | "idle";
 
-export type CardType = "user" | "research" | "engineering" | "simulation" | "experiment" | "status" | "findings" | "error";
+export type CardType =
+  | "user"
+  | "orchestrator"
+  | "research"
+  | "engineering"
+  | "simulation"
+  | "experiment"
+  | "status"
+  | "findings"
+  | "error";
 
 export type ExperimentStatus = "kept" | "discarded" | "crash" | "running" | "baseline";
 
@@ -18,11 +27,25 @@ export interface Card {
   id: string;
   type: CardType;
   timestamp: string;
-  content: UserCard | ResearchCard | EngineeringCard | SimulationCard | ExperimentCard | StatusCard | FindingsCard | ErrorCard;
+  content:
+    | UserCard
+    | OrchestratorCard
+    | ResearchCard
+    | EngineeringCard
+    | SimulationCard
+    | ExperimentCard
+    | StatusCard
+    | FindingsCard
+    | ErrorCard;
 }
 
 export interface UserCard {
   message: string;
+  budget?: string;
+}
+
+export interface OrchestratorCard {
+  thinking: string;
 }
 
 export interface ResearchAgentOutput {
@@ -41,6 +64,7 @@ export interface EngineeringCard {
   summary: string;
   status: "building" | "validating" | "streaming" | "done";
   trace: string[];
+  thinking?: string[];
   simSpec?: {
     name: string;
     metric: string;
@@ -58,6 +82,7 @@ export interface SimulationCard {
 
 export interface ExperimentCard {
   experiments: Experiment[];
+  thinkingLines?: string[];
 }
 
 export interface StatusCard {

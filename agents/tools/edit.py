@@ -38,22 +38,28 @@ async def execute(input: dict, work_dir: str) -> str:
     except ValueError:
         return f"Error: path must be under {work_dir}"
 
+    # Claude sometimes uses alternate key names — normalize
+    new_content = (input.get("content") or input.get("new_string")
+                   or input.get("replacement") or input.get("new_content") or "")
+
     if input["mode"] == "write":
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(input["content"])
-        return f"Wrote {len(input['content'])} chars to {path}"
+        path.write_text(new_content)
+        return f"Wrote {len(new_content)} chars to {path}"
 
     elif input["mode"] == "replace":
         if not path.exists():
             return f"Error: {path} does not exist"
-        old = input.get("old_string", "")
+        old = input.get("old_string") or input.get("old") or input.get("find") or ""
         if not old:
             return "Error: old_string is required for replace mode"
+        if not new_content:
+            return "Error: content (replacement text) is required for replace mode"
         text = path.read_text()
         if old not in text:
             return f"Error: old_string not found in {path}"
         count = text.count(old)
-        new_text = text.replace(old, input["content"], 1)
+        new_text = text.replace(old, new_content, 1)
         path.write_text(new_text)
         return f"Replaced 1 of {count} occurrence(s) in {path}"
 

@@ -77,8 +77,7 @@ export function createStore() {
   }
 
   function emit() {
-    // Create new reference so useSyncExternalStore detects change
-    state = { ...state };
+    state = { ...state, sessions: new Map(state.sessions) };
     for (const l of listeners) l();
   }
 
@@ -112,6 +111,8 @@ export function createStore() {
           research_findings: null,
           findings: null,
           error: null,
+          engineer_timeout: 1200,
+          scientist_timeout: 1200,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },
@@ -178,11 +179,10 @@ export function createStore() {
     const agentId = data.agent_id as string | undefined;
     const messages = data.messages as TranscriptMessage[] | undefined;
     if (messages) {
-      // Tag each message with the agent_id so the UI can filter by role
       for (const msg of messages) {
-        (msg as Record<string, unknown>)._agent_id = agentId;
+        (msg as unknown as Record<string, unknown>)._agent_id = agentId;
       }
-      s.transcript.push(...messages);
+      s.transcript = [...s.transcript, ...messages];
       rebuildTimeline(s);
     }
     emit();
